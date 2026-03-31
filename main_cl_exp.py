@@ -204,10 +204,6 @@ def train(trainloader, milnet, criterion, optimizer, epoch, args, device,
         if args.model == 'AmbiguousMIL':
             bag_prediction, instance_pred, weighted_instance_pred, non_weighted_instance_pred, \
                 x_cls, x_seq, attn_layer1, attn_layer2 = milnet(bag_feats)
-        elif args.model == 'MILLET':
-            bag_prediction, instance_pred, interpretation = milnet(bag_feats)
-            weighted_instance_pred = None
-            x_cls, x_seq = None, None
         else:
             if epoch < args.epoch_des:
                 bag_prediction, x_cls, attn_layer1, attn_layer2 = milnet(bag_feats, warmup=True)
@@ -449,7 +445,7 @@ def main():
     parser.add_argument('--dropout_node', default=0.2, type=float)
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--model', default='AmbiguousMIL', type=str,
-                        help='AmbiguousMIL | newTimeMIL | TimeMIL | MILLET')
+                        help='AmbiguousMIL')
     parser.add_argument('--prepared_npz', type=str, default='./data/PAMAP2.npz')
     parser.add_argument('--optimizer', default='adamw', type=str, help='adamw | sgd | adam')
     parser.add_argument('--save_dir', default='./savemodel/', type=str)

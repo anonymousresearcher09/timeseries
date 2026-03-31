@@ -22,9 +22,6 @@ from mydataload import loadorean
 from dba_dataloader import build_dba_for_timemil, build_dba_windows_for_mixed
 from lookhead import Lookahead
 
-from models.timemil_old import newTimeMIL, AmbiguousMIL
-from models.millet import MILLET
-from models.timemil import TimeMIL, originalTimeMIL
 from models.expmil import AmbiguousMILwithCL
 from compute_aopcr import compute_classwise_aopcr
 
@@ -309,18 +306,6 @@ def test(testloader, milnet, criterion, epoch, args, device,
             if args.model == 'AmbiguousMIL':
                 bag_prediction, instance_pred, weighted_instance_pred, non_weighted_instance_pred, \
                     x_cls, x_seq, attn_layer1, attn_layer2 = milnet(bag_feats)
-            elif args.model == 'MILLET':
-                bag_prediction, instance_pred, interpretation = model(bag_feats)
-                weighted_instance_pred = None
-                attn_layer2 = None
-                x_seq = None
-            elif args.model in ['newTimeMIL', 'TimeMIL']:
-                out = model(bag_feats)
-                instance_pred = None
-                attn_layer2 = None
-                bag_prediction = out[0] if isinstance(out, (tuple, list)) else out
-                if isinstance(out, (tuple, list)):
-                    attn_layer2 = out[3]
             else:
                 raise ValueError(f"Unknown model: {args.model}")
 
@@ -350,12 +335,6 @@ def test(testloader, milnet, criterion, epoch, args, device,
 
                 if args.model == 'AmbiguousMIL':
                     pred_inst = torch.argmax(weighted_instance_pred, dim=2)
-                elif args.model == 'MILLET' and instance_pred is not None:
-                    pred_inst = torch.argmax(instance_pred, dim=2)
-                elif args.model in ['newTimeMIL', 'TimeMIL'] and attn_layer2 is not None:
-                    B, T, C = y_inst.shape
-                    attn_cls = attn_layer2[:, :, :C, C:]
-                    pred_inst = torch.argmax(attn_cls.mean(dim=1), dim=1)
                 else:
                     pred_inst = None
 
@@ -658,19 +637,6 @@ def main():
         base_model = AmbiguousMILwithCL(args.feats_size, mDim=args.embed, n_classes=num_classes,
                                          dropout=args.dropout_node, is_instance=True).to(device)
         proto_bank = PrototypeBank(num_classes=num_classes, dim=args.embed, device=device, momentum=args.proto_momentum)
-    elif args.model == 'newTimeMIL':
-        base_model = TimeMIL(args.feats_size, mDim=args.embed, n_classes=num_classes,
-                              dropout=args.dropout_node, max_seq_len=seq_len, is_instance=True).to(device)
-        proto_bank = None
-    elif args.model == 'TimeMIL':
-        base_model = originalTimeMIL(args.feats_size, mDim=args.embed, n_classes=num_classes,
-                                      dropout=args.dropout_node, max_seq_len=seq_len, is_instance=True).to(device)
-        proto_bank = None
-    elif args.model == 'MILLET':
-        base_model = MILLET(args.feats_size, mDim=args.embed, n_classes=num_classes,
-                             dropout=args.dropout_node, max_seq_len=seq_len,
-                             pooling=args.millet_pooling, is_instance=True).to(device)
-        proto_bank = None
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
@@ -821,13 +787,13 @@ def main():
             'AmbiguousMIL': lambda: AmbiguousMILwithCL(args.feats_size, mDim=args.embed,
                                                         n_classes=args.num_classes,
                                                         dropout=args.dropout_node, is_instance=True),
-            'newTimeMIL':   lambda: TimeMIL(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
-                                            dropout=args.dropout_node, max_seq_len=args.seq_len, is_instance=True),
-            'TimeMIL':      lambda: originalTimeMIL(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
-                                                    dropout=args.dropout_node, max_seq_len=args.seq_len, is_instance=True),
-            'MILLET':       lambda: MILLET(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
-                                           dropout=args.dropout_node, max_seq_len=args.seq_len,
-                                           pooling=args.millet_pooling, is_instance=True),
+            # 'newTimeMIL':   lambda: TimeMIL(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
+            #                                 dropout=args.dropout_node, max_seq_len=args.seq_len, is_instance=True),
+            # 'TimeMIL':      lambda: originalTimeMIL(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
+            #                                         dropout=args.dropout_node, max_seq_len=args.seq_len, is_instance=True),
+            # 'MILLET':       lambda: MILLET(args.feats_size, mDim=args.embed, n_classes=args.num_classes,
+            #                                dropout=args.dropout_node, max_seq_len=args.seq_len,
+            #                                pooling=args.millet_pooling, is_instance=True),
         }
 
         if args.model in model_map:

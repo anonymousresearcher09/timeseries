@@ -490,6 +490,9 @@ def main():
     parser.add_argument('--sparsity_loss_w', type=float, default=0.05)
     parser.add_argument('--proto_loss_w', type=float, default=0.2)
 
+    # Data path
+    parser.add_argument('--data_path', type=str, default='./data', help='Root path for dataset storage')
+
     # DBA dataset params
     parser.add_argument('--dba_root', type=str, default='./dba_data')
     parser.add_argument('--dba_window', type=int, default=12000)
@@ -617,8 +620,8 @@ def main():
         args.num_classes = num_classes
 
     else:
-        Xtr, ytr, meta = load_classification(name=args.dataset, split='train', extract_path='./data')
-        Xte, yte, _    = load_classification(name=args.dataset, split='test',  extract_path='./data')
+        Xtr, ytr, meta = load_classification(name=args.dataset, split='train', extract_path=args.data_path)
+        Xte, yte, _    = load_classification(name=args.dataset, split='test',  extract_path=args.data_path)
 
         word_to_idx = {cls: i for i, cls in enumerate(meta['class_values'])}
         ytr_idx = torch.tensor([word_to_idx[i] for i in ytr], dtype=torch.long)

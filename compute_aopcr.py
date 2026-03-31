@@ -16,7 +16,6 @@ from syntheticdataset import *
 from utils import *
 from mydataload import loadorean
 
-from models.timemil_old import TimeMIL, newTimeMIL, AmbiguousMIL
 from models.expmil import AmbiguousMILwithCL
 
 warnings.filterwarnings("ignore")

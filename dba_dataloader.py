@@ -13,35 +13,35 @@ from torch.utils.data import TensorDataset
 
 
 # ============================================
-# 1) DBA용 설정
+# 1) DBA configuration
 # ============================================
 
-# 폴더 이름 -> class index
+# Folder name -> class index
 DBA_STYLE_TO_LABEL = {
     "aggressive": 0,
     "conservative": 1,
     "normal": 2,
 }
 
-# parsed_50hz.csv 내부에서 사용할 feature 컬럼들
-# 실제 csv 컬럼 이름에 맞게 수정해서 쓰세요.
+# Feature columns to use from parsed_50hz.csv
+# Modify to match actual csv column names.
 DBA_FEATURE_COLS = [
     "imu_acc_long", "imu_acc_lat", "imu_yaw_rate","imu_roll_rate",
-    "odom_vx", # 차량 속도
-    "odom_wz", # 차량 각속도
+    "odom_vx", # vehicle speed
+    "odom_wz", # vehicle angular velocity
     "scc_obj_relspd", "scc_obj_dst",
     # "lead_present"
 ]
 
 
 # ============================================
-# 2) 시퀀스 스캔
+# 2) Sequence scanning
 # ============================================
 
 def dba_scan_sequences(root_dir: str) -> List[Tuple[str, int]]:
     """
-    root_dir 아래 1_xxx, 2_xxx, ... 폴더에서
-    aggressive/conservative/normal 하위의 parsed_50hz.csv 경로와 label을 수집.
+    Scans folders 1_xxx, 2_xxx, ... under root_dir and collects
+    parsed_50hz.csv paths and labels from aggressive/conservative/normal subdirectories.
 
     return:
       [(csv_path, label_int), ...]
@@ -66,7 +66,7 @@ def dba_scan_sequences(root_dir: str) -> List[Tuple[str, int]]:
 
 
 # ============================================
-# 3) sliding window 생성
+# 3) Sliding window generation
 # ============================================
 
 def _build_windows_from_sequences(
@@ -77,7 +77,7 @@ def _build_windows_from_sequences(
 ):
     """
     sequences: [(csv_path, label_int), ...]
-    feature_cols: 사용할 feature 컬럼 이름 리스트
+    feature_cols: list of feature column names to use
 
     return:
       X: np.ndarray [N, window_size, D]
@@ -89,7 +89,7 @@ def _build_windows_from_sequences(
     for csv_path, label in sequences:
         df = pd.read_csv(csv_path)
 
-        # feature subset만 사용
+        # Use only the feature subset
         X_seq = df[feature_cols].to_numpy(dtype=np.float32)  # [T, D]
         T = X_seq.shape[0]
         if T < window_size:
@@ -113,11 +113,11 @@ def _build_windows_from_sequences(
 def _get_driver_id_from_csv(csv_path: str) -> str:
     """
     csv_path: .../<driver>/<style>/parsed_50hz.csv
-    여기서 <driver> 폴더 이름을 driver_id로 사용.
+    Uses the <driver> folder name as driver_id.
     """
     style_dir = os.path.dirname(csv_path)          # .../<driver>/<style>
     driver_dir = os.path.dirname(style_dir)        # .../<driver>
-    driver_id = os.path.basename(driver_dir)       # "1_xxx" 같은 이름
+    driver_id = os.path.basename(driver_dir)       # e.g. "1_xxx"
     return driver_id
 
 
@@ -128,12 +128,12 @@ def _split_sequences_by_driver(
 ):
     """
     seq_list: [(csv_path, label_int), ...]
-    -> driver 단위로 묶어서 train/test split.
+    -> Groups by driver and performs train/test split.
 
-    전제:
-      - 각 driver가 aggressive/normal/conservative 1개씩 갖고 있음.
-    보장:
-      - test drivers가 1명 이상이면 test에 3개 class 모두 등장.
+    Assumption:
+      - Each driver has one of each: aggressive/normal/conservative.
+    Guarantee:
+      - If there is at least one test driver, all 3 classes appear in test.
     """
     # driver_id -> [(csv_path, label_int), ...]
     driver_to_seqs = {}
@@ -149,7 +149,7 @@ def _split_sequences_by_driver(
     n_driver_test = max(1, int(round(n_driver_total * test_ratio)))
     n_driver_train = n_driver_total - n_driver_test
     if n_driver_train == 0:
-        # extreme case: 모든 driver가 test로 가는 경우 방지
+        # extreme case: prevent all drivers from going to test
         n_driver_train = 1
         n_driver_test = n_driver_total - 1
 
@@ -186,8 +186,8 @@ def _stratified_split_sequences(
 ):
     """
     seq_list: [(csv_path, label_int), ...]
-    각 label 별로 비율에 맞춰 train/test를 나누되,
-    각 label이 test에 최소 1개씩은 들어가도록 하는 split.
+    Splits train/test proportionally per label,
+    ensuring each label has at least one sample in the test set.
     """
     # label -> [(csv_path, label_int), ...]
     by_label = {}
@@ -207,15 +207,15 @@ def _stratified_split_sequences(
         if n_total == 0:
             continue
 
-        # 각 클래스가 test에 최소 1개는 들어가도록 보장
+        # Ensure each class has at least one sample in test
         n_test = max(1, int(round(n_total * test_ratio)))
         n_train = n_total - n_test
 
-        # n_train이 0이 될 수도 있음 (해당 클래스 전체가 test로 가는 경우)
+        # n_train may be 0 (when all samples of a class go to test)
         test_seqs.extend(items[:n_test])
         train_seqs.extend(items[n_test:])
 
-    # 전체적으로도 다시 한 번 섞어주는 것이 좋습니다 (순서 랜덤화)
+    # Shuffle again overall for order randomization
     rng.shuffle(train_seqs)
     rng.shuffle(test_seqs)
 
@@ -224,7 +224,7 @@ def _stratified_split_sequences(
 
 
 # ============================================
-# 4) TimeMIL용 빌더
+# 4) Builder for TimeMIL
 # ============================================
 
 def build_dba_tensors(
@@ -236,8 +236,8 @@ def build_dba_tensors(
     seed: int = 42,
 ):
     """
-    DBA 데이터셋을 시퀀스 단위로 train/test split 하고,
-    각각을 sliding window로 자른 뒤 TensorDataset으로 반환.
+    Splits DBA dataset into train/test at the sequence level,
+    then slices each into sliding windows and returns as TensorDataset.
 
     return:
       trainset : TensorDataset( Xtr:[N_tr, L, D], ytr:[N_tr, C] )
@@ -283,8 +283,8 @@ def build_dba_tensors(
 
 def build_dba_for_timemil(args):
     """
-    main_cl_fix.py에서 편하게 쓰기 위한 wrapper.
-    args.dba_root, args.dba_window, args.dba_stride, args.dba_test_ratio, args.seed 사용.
+    Convenience wrapper for use in main_cl_fix.py.
+    Uses args.dba_root, args.dba_window, args.dba_stride, args.dba_test_ratio, args.seed.
     """
     trainset, testset, seq_len, num_classes, feat_in = build_dba_tensors(
         root_dir=args.dba_root,
@@ -303,10 +303,10 @@ def _build_dba_base_sequences(
     seed: int = 42,
 ):
     """
-    DBA용 'base 시퀀스' 빌더.
-    - 각 parsed_50hz.csv 전체를 하나의 시퀀스로 보고,
-    - 최대 길이에 맞춰 zero-padding 해서 [N, L, D] 텐서를 만든 뒤
-    - train/test를 sequence 단위로 나눠서 반환.
+    Builder for DBA 'base sequences'.
+    - Treats each parsed_50hz.csv as a single sequence,
+    - Zero-pads to the maximum length to create [N, L, D] tensors,
+    - Returns train/test split at the sequence level.
 
     return:
       Xtr      : torch.FloatTensor [N_tr, L, D]
@@ -344,7 +344,7 @@ def _build_dba_base_sequences(
 
     y_arr = np.array(y_list, dtype=np.int64)
 
-    # sequence 단위 train/test split
+    # Per-sequence train/test split
     indices = np.arange(N)
     rng = np.random.RandomState(seed)
     rng.shuffle(indices)
@@ -368,13 +368,11 @@ def _build_dba_base_sequences(
 
 def build_dba_for_mixed(args):
     """
-    main_cl_fix.py에서 --dataset dba, --datatype mixed 일 때 사용할 helper.
+    Helper for --dataset dba, --datatype mixed in main_cl_fix.py.
 
-    MixedSyntheticBagsConcatK에서 요구하는 형태:
+    Returns the format required by MixedSyntheticBagsConcatK:
       - Xtr, Xte : [N, L, D]
-      - ytr_idx, yte_idx : [N] (클래스 index)
-
-    을 반환한다.
+      - ytr_idx, yte_idx : [N] (class index)
     """
     Xtr, ytr_idx, Xte, yte_idx, seq_len, num_classes, feat_in = _build_dba_base_sequences(
         root_dir=args.dba_root,
@@ -388,12 +386,12 @@ def build_dba_windows_for_mixed(
     args,
 ):
     """
-    DBA + datatype='mixed' 용 helper.
+    Helper for DBA + datatype='mixed'.
 
-    - 각 parsed_50hz.csv 를 sequence로 보고
-    - window_size / stride 로 잘라서 window 단위의 sample을 만든 뒤
-    - train/test seq split 기준으로 train 윈도우 / test 윈도우 분리
-    - MixedSyntheticBagsConcatK 에 넣기 좋은 형태로 반환
+    - Treats each parsed_50hz.csv as a sequence
+    - Slices into window-level samples using window_size / stride
+    - Separates train/test windows based on sequence-level split
+    - Returns in a format suitable for MixedSyntheticBagsConcatK
 
     return:
       Xtr      : torch.FloatTensor [N_tr_win, L, D]
@@ -422,7 +420,7 @@ def build_dba_windows_for_mixed(
         seq_list, test_ratio=test_ratio, seed=seed
     )
 
-    # 기존 _build_windows_from_sequences 재사용
+    # Reuse existing _build_windows_from_sequences
     Xtr_np, ytr_np = _build_windows_from_sequences(
         train_seqs, feature_cols, window_size, stride
     )

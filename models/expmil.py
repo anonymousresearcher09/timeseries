@@ -21,7 +21,7 @@ class AmbiguousMILwithCL(nn.Module):
         n_classes: int,
         mDim: int = 128,
         dropout: float = 0.0,
-        is_instance: bool = True,     # instance logits/attn을 함께 리턴할지 여부
+        is_instance: bool = True,     # whether to return instance logits/attn
     ) -> None:
         super().__init__()
         self.is_instance = is_instance
@@ -29,7 +29,7 @@ class AmbiguousMILwithCL(nn.Module):
         self.mDim = mDim
 
         # ------------------------------
-        # 1) Backbone (MILLET 스타일)
+        # 1) Backbone
         # ------------------------------
         out_channels = max(1, mDim // 4)
         self.feature_extractor = InceptionTimeFeatureExtractor(
@@ -76,8 +76,8 @@ class AmbiguousMILwithCL(nn.Module):
         Args:
             x: [B, T, D]
         Returns:
-            bag_logits_ts:  [B, C]  (attention pooling 기반 TS prediction)
-            bag_logits_tp:  [B, C]  (conjunctive pooling 기반 bag prediction)
+            bag_logits_ts:  [B, C]  (attention pooling based TS prediction)
+            bag_logits_tp:  [B, C]  (conjunctive pooling based bag prediction)
             inst_logits:    [B, T, C] (time point prediction)
             attn_ts:        [B, T, 1]
             attn_tp:        [B, T, 1]

@@ -7,12 +7,12 @@ from torch.utils.data import Dataset
 from typing import Optional, Sequence
 from aeon.datasets import load_classification
 
-# ------------------ 유틸 ------------------
+# ------------------ Utilities ------------------
 def _to_multi_hot_from_ts_int(y_ts_int: np.ndarray, C: int, exclude: Optional[Sequence[int]] = None) -> np.ndarray:
     """
-    y_ts_int: (N, L) 정수 라벨. 각 시퀀스 내 등장한 클래스의 합집합으로 멀티-핫 생성.
-    exclude : 제외할 클래스 ID 목록(예: [0])
-    return  : (N, C) float32 멀티-핫
+    y_ts_int: (N, L) integer labels. Generates multi-hot from the union of classes present in each sequence.
+    exclude : list of class IDs to exclude (e.g., [0])
+    return  : (N, C) float32 multi-hot
     """
     N, L = y_ts_int.shape
     y_seq = np.zeros((N, C), dtype=np.float32)
@@ -29,8 +29,8 @@ def _to_multi_hot_from_ts_int(y_ts_int: np.ndarray, C: int, exclude: Optional[Se
 
 def _to_multi_hot_from_ts_onehot(y_ts_oh: np.ndarray, exclude: Optional[Sequence[int]] = None) -> np.ndarray:
     """
-    y_ts_oh: (N, L, C) 원-핫 타임스텝 라벨 → (N, C) 멀티-핫
-    exclude: 제외 클래스
+    y_ts_oh: (N, L, C) one-hot timestep labels -> (N, C) multi-hot
+    exclude: classes to exclude
     """
     N, L, C = y_ts_oh.shape
     y_seq = (y_ts_oh.sum(axis=1) > 0).astype(np.float32)  # (N, C)
@@ -38,13 +38,13 @@ def _to_multi_hot_from_ts_onehot(y_ts_oh: np.ndarray, exclude: Optional[Sequence
         y_seq[:, list(exclude)] = 0.0
     return y_seq
 
-# --------------- NPZ 윈도우 Dataset ---------------
+# --------------- NPZ Window Dataset ---------------
 class NPZWindowDataset(Dataset):
     """
     X: (N, L, D)
-    y_seq: (N, C)  ← 학습에 반환되는 멀티-핫(시퀀스 단위)
-    (옵션) y_ts_int: (N, L)  타임스텝 정수 라벨
-    (옵션) y_ts_oh : (N, L, C) 타임스텝 원-핫 라벨
+    y_seq: (N, C)  <- multi-hot (sequence-level) returned for training
+    (optional) y_ts_int: (N, L)  timestep integer labels
+    (optional) y_ts_oh : (N, L, C) timestep one-hot labels
     """
     def __init__(self, X: np.ndarray,
                  y_seq: Optional[np.ndarray],
@@ -61,15 +61,15 @@ class NPZWindowDataset(Dataset):
         self.exclude  = list(exclude_labels) if exclude_labels else []
 
         if y_seq is not None:
-            # 이미 시퀀스 단위 라벨이 있으면 그대로 사용
+            # Use existing sequence-level labels as-is
             self.y_seq = y_seq.astype(np.float32, copy=False)
         else:
-            # 타임스텝 라벨에서 시퀀스 멀티-핫 생성
+            # Generate sequence multi-hot from timestep labels
             if self.y_ts_oh is not None:
                 C = self.y_ts_oh.shape[-1]
                 self.y_seq = _to_multi_hot_from_ts_onehot(self.y_ts_oh, exclude=self.exclude)
             elif self.y_ts_int is not None:
-                # C는 최대 라벨+1로 추정(안전하게 npz에 'label_values'가 있으면 그 길이를 쓰는 것이 더 좋음)
+                # Estimate C as max_label+1 (safer to use len of 'label_values' from npz if available)
                 C = int(self.y_ts_int.max()) + 1 if self.y_ts_int.size else 0
                 self.y_seq = _to_multi_hot_from_ts_int(self.y_ts_int, C=C, exclude=self.exclude)
             else:
@@ -84,10 +84,10 @@ class NPZWindowDataset(Dataset):
 
     def __getitem__(self, idx):
         x = torch.from_numpy(self.X[idx])           # (L, D)
-        y = torch.from_numpy(self.y_seq[idx])       # (C,)  ← 학습은 약지도(멀티-핫)만 사용
+        y = torch.from_numpy(self.y_seq[idx])       # (C,)  <- training uses only weak supervision (multi-hot)
         return x, y
 
-    # 추후 검증 시 타임스텝 라벨 조회가 필요하면 꺼내 쓰기 위한 헬퍼 (옵션)
+    # Optional helper for retrieving timestep labels during validation
     def get_timestep_labels(self, idx):
         if self.y_ts_oh is not None:
             return self.y_ts_oh[idx]    # (L, C)
@@ -95,14 +95,14 @@ class NPZWindowDataset(Dataset):
             return self.y_ts_int[idx]   # (L,)
         return None
 
-# --------------- 기존 + NPZ 분기 loadorean ---------------
+# --------------- AEON + NPZ branching loadorean ---------------
 class loadorean(Dataset):
     """
-    AEON 데이터셋은 기존 그대로.
-    NPZ가 주어지면:
-      - 우선순위: y_seq_*가 있으면 그대로 사용
-      - 없고 y_ts_*가 있으면 윈도우 내 등장 라벨의 합집합으로 멀티-핫 생성(로더에서)
-    제외 라벨이 있으면 args.exclude_labels = "0,255" 형식으로 넘겨주세요(없으면 무시).
+    AEON datasets are used as-is.
+    When NPZ is provided:
+      - Priority: use y_seq_* directly if available
+      - Otherwise, if y_ts_* exists, generate multi-hot from the union of labels in the window (in the loader)
+    To exclude labels, pass args.exclude_labels = "0,255" format (ignored if absent).
     """
     def __init__(self, args, split='train', seed=0, return_instance_labels=False):
         super().__init__()
@@ -110,11 +110,11 @@ class loadorean(Dataset):
         self.split = split
         self.return_instance_labels = return_instance_labels
 
-        # ========== NPZ 분기 ==========
+        # ========== NPZ branch ==========
         if args.dataset in ['PAMAP2']:
             data = np.load(args.prepared_npz, allow_pickle=False)
 
-            # 스플릿별 키 매핑
+            # Per-split key mapping
             key_map = {
                 "train": ("X_train", "y_train", "y_ts_train", "y_ts_train_oh"),
                 "val":   ("X_val",   "y_val",   "y_ts_val",   "y_ts_val_oh"),
@@ -133,14 +133,14 @@ class loadorean(Dataset):
                 X=X, y_seq=y_seq, y_ts_int=y_ts_int, y_ts_oh=y_ts_oh
             )
 
-            # 외부 속성(원 코드 호환)
+            # External attributes (original code compatibility)
             self.max_len   = int(data["seq_len"]) if "seq_len" in data.files else self._inner.L
             self.num_class = self._inner.C
             self.feat_in   = self._inner.D
             self._mode = "npz"
             return
 
-        # ========== AEON 분기(기존) ==========
+        # ========== AEON branch (existing) ==========
         elif args.dataset == 'JapaneseVowels':
             self.seq_len = 29
         elif args.dataset == 'SpokenArabicDigits':
@@ -188,11 +188,11 @@ class loadorean(Dataset):
             y = torch.from_numpy(self._inner.y_seq[idx])        # (C,)
 
             if self.return_instance_labels:
-                # 1) 원-핫 타임스텝 라벨이 이미 있는 경우 (N, L, C)
+                # 1) One-hot timestep labels already available (N, L, C)
                 if self._inner.y_ts_oh is not None:
                     inst = torch.from_numpy(self._inner.y_ts_oh[idx]).float()   # (L, C)
 
-                # 2) 정수 타임스텝 라벨만 있는 경우 (N, L)
+                # 2) Only integer timestep labels available (N, L)
                 elif self._inner.y_ts_int is not None:
                     ints = torch.from_numpy(self._inner.y_ts_int[idx]).long()   # (L,)
                     inst = F.one_hot(ints, num_classes=self._inner.C).float()    # (L, C)
@@ -204,14 +204,14 @@ class loadorean(Dataset):
 
             return x, y
 
-        # AEON 분기 (instance 라벨 없음)
+        # AEON branch (no instance labels)
         feats = torch.from_numpy(self.FeatList[idx]).permute(1, 0).float()  # (L, D)
         if feats.shape[0] < self.max_len:
             feats = F.pad(feats, pad=(0, 0, self.max_len - feats.shape[0], 0))
         label = self.label[idx].float()
         return feats, label
 
-    # 검증 때 타임스텝 라벨이 필요하면 이 메서드로 꺼낼 수 있음(옵션)
+    # Optional: use this method to retrieve timestep labels during validation
     def get_timestep_labels(self, idx):
         if getattr(self, "_mode", "") == "npz":
             return self._inner.get_timestep_labels(idx)

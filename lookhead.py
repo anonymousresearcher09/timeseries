@@ -15,16 +15,16 @@ class Lookahead(Optimizer):
             raise ValueError(f'Invalid lookahead steps: {k}')
 
         self.base_optimizer = base_optimizer
-        # Lookahead용 기본값(파라미터 그룹에 주입)
+        # Default values for Lookahead (injected into param groups)
         defaults = dict(lookahead_alpha=alpha, lookahead_k=k, lookahead_step=0)
 
-        # 🔴 핵심: Optimizer 내부 훅/상태 초기화를 위해 반드시 호출
-        # base_optimizer.param_groups 를 그대로 넘겨 동일한 그룹을 공유합니다.
+        # Core: must call to initialize Optimizer internal hooks/state
+        # Pass base_optimizer.param_groups directly to share the same groups.
         super().__init__(self.base_optimizer.param_groups, defaults)
 
         self.state = defaultdict(dict)
 
-        # 파라미터 그룹에 기본값 보장
+        # Ensure default values in param groups
         for group in self.param_groups:
             group.setdefault('lookahead_alpha', alpha)
             group.setdefault('lookahead_k', k)
@@ -75,7 +75,7 @@ class Lookahead(Optimizer):
         }
         self.base_optimizer.load_state_dict(fast_state_dict)
 
-        # slow buffer 복구
+        # Restore slow buffer
         if 'slow_state' not in state_dict:
             print('Loading state_dict from optimizer without Lookahead applied.')
             state_dict['slow_state'] = defaultdict(dict)
@@ -84,13 +84,13 @@ class Lookahead(Optimizer):
             'state': state_dict['slow_state'],
             'param_groups': state_dict['param_groups'],
         }
-        # Optimizer.load_state_dict 사용하려면 super().__init__로 초기화되어 있어야 함
+        # Must be initialized via super().__init__ to use Optimizer.load_state_dict
         super(Lookahead, self).load_state_dict(slow_state_dict)
 
-        # 동일 컨테이너 참조 유지
+        # Maintain same container reference
         self.param_groups = self.base_optimizer.param_groups
 
-        # 누락된 lookahead 기본값 주입(재보장)
+        # Re-inject missing lookahead defaults
         for group in self.param_groups:
             group.setdefault('lookahead_alpha', self.defaults['lookahead_alpha'])
             group.setdefault('lookahead_k', self.defaults['lookahead_k'])

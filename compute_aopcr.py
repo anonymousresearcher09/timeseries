@@ -37,19 +37,19 @@ def extract_attn_importance(attn_layer2: torch.Tensor,
                             model_name: str,
                             args) -> torch.Tensor:
     """
-    TimeMIL / newTimeMIL / AmbiguousMIL 공통으로
-    'class-token → time-token' attention 기반 중요도 score[t]를 뽑는 함수.
+    Common function for TimeMIL / newTimeMIL / AmbiguousMIL
+    Extracts importance score[t] based on 'class-token → time-token' attention.
 
-    attn_layer2: [B, H, L, L] 또는 [B, L, L]
-    T: 시퀀스 길이
-    num_classes: 클래스 개수
-    target_c: 중요도를 볼 target class index
+    attn_layer2: [B, H, L, L] or [B, L, L]
+    T: sequence length
+    num_classes: number of classes
+    target_c: target class index for importance
     model_name: 'TimeMIL' / 'newTimeMIL' / 'AmbiguousMIL'
-    return: [B, T]  (각 timestep 중요도)
+    return: [B, T]  (per-timestep importance)
     """
-    # 1) head 평균해서 [B, L, L]로 통일
+    # 1) Average over heads to get [B, L, L]
     if attn_layer2.dim() == 4:
-        # [B, H, L, L] -> head 평균
+        # [B, H, L, L] -> average over heads
         attn = attn_layer2.mean(dim=1)     # [B, L, L]
     elif attn_layer2.dim() == 3:
         attn = attn_layer2                 # [B, L, L]
@@ -66,7 +66,7 @@ def extract_attn_importance(attn_layer2: torch.Tensor,
         # query = class tokens (0..C_att-1), key = time tokens (C_att..C_att+T-1)
         attn_cls2time = attn[:, :C, C:]     # [B, C_att, T]
 
-        # target class에 해당하는 class token만 선택
+        # Select only the class token for the target class
         scores = attn_cls2time[:, cls_idx, :]              # [B, T]
     elif model_name == 'TimeMIL': # Single class token
         # query = class token (0), key = time tokens (1..T)
@@ -76,7 +76,7 @@ def extract_attn_importance(attn_layer2: torch.Tensor,
 
 
 # ------------------------------------------------------
-#  AOPCR 계산 핵심 함수
+#  Core AOPCR computation function
 # ------------------------------------------------------
 @torch.no_grad()
 def compute_classwise_aopcr(
@@ -89,34 +89,34 @@ def compute_classwise_aopcr(
     pred_threshold: float = 0.5,
 ):
     """
-    TimeMIL / newTimeMIL / AmbiguousMIL 에 대해
-    'class-wise AOPCR'을 계산하는 함수 (multi-label 대응).
+    Computes 'class-wise AOPCR' for TimeMIL / newTimeMIL / AmbiguousMIL
+    (supports multi-label).
 
-    - instance는 제거하지 않고 0으로 마스킹만 함
-    - attn_layer2는 test 코드와 동일한 방식으로 파싱
-    - 각 bag에서 (1) label이 0.5 이상인 클래스들, 없으면
-      (2) 예측 argmax 클래스를 대상으로 curve를 계산
+    - Instances are not removed, only zero-masked
+    - attn_layer2 is parsed the same way as in the test code
+    - For each bag, computes curves for (1) classes with label >= 0.5,
+      or if none, (2) the predicted argmax class
     """
     device = next(milnet.parameters()).device
     num_classes = args.num_classes
 
-    # perturbation 비율 (0% ~ stop까지 step 간격)
-    # alphas[0] = 0 (no perturb), alphas[1:] = 실제 perturb
+    # Perturbation ratios (0% to stop in step increments)
+    # alphas[0] = 0 (no perturb), alphas[1:] = actual perturbation
     alphas = torch.arange(0.0, stop + 1e-8, step, device=device)
     n_steps = len(alphas)
 
-    # class-wise 통계
+    # Class-wise statistics
     aopcr_per_class = torch.zeros(num_classes, device=device)
-    counts = torch.zeros(num_classes, device=device)          # class별 bag 개수
-    M_expl = torch.zeros(num_classes, n_steps, device=device) # class별 explanation curve 평균
-    M_rand = torch.zeros(num_classes, n_steps, device=device) # class별 random curve 평균
+    counts = torch.zeros(num_classes, device=device)          # per-class bag count
+    M_expl = torch.zeros(num_classes, n_steps, device=device) # per-class explanation curve mean
+    M_rand = torch.zeros(num_classes, n_steps, device=device) # per-class random curve mean
 
     milnet.eval()
 
     total_aopcr_sum = 0.0
 
     for batch in testloader:
-        # testloader: (feats, label, y_inst) 구조라고 가정 (지금 코드랑 동일)
+        # testloader: assumes (feats, label, y_inst) structure (same as current code)
 
         if len(batch) == 3:
             feats, bag_label, y_inst = batch
@@ -129,7 +129,7 @@ def compute_classwise_aopcr(
         x = x.contiguous()
         batch_size, T, D = x.shape
 
-        # ----- 모델 forward (원본) -----
+        # ----- Model forward (original) -----
         if args.model == 'AmbiguousMIL':
             out = milnet(x)
             if not isinstance(out, (tuple, list)):
@@ -158,10 +158,10 @@ def compute_classwise_aopcr(
                 y_row = y_bag[b]
 
             if args.datatype == 'original':
-                # original 데이터셋인 경우 (single-label)
+                # For original dataset (single-label)
                 target_classes = torch.tensor([prob[b].argmax()], device=device)
             else:
-                # mixed / synthetic 데이터셋인 경우 (multi-label)
+                # For mixed / synthetic dataset (multi-label)
                 target_classes = (prob[b] > pred_threshold).nonzero(as_tuple=False).flatten()
             if target_classes.numel() == 0:
                 continue
@@ -169,14 +169,14 @@ def compute_classwise_aopcr(
             for cls_tensor in target_classes:
                 pred_c = int(cls_tensor.item())
 
-                # ----- timestep 중요도 score 계산 -----
+                # ----- Compute timestep importance scores -----
                 if args.model == 'AmbiguousMIL':
-                    # instance_logits: [B, T, C] -> softmax 후 target class prob 사용
+                    # instance_logits: [B, T, C] -> use target class prob after softmax
                     # s_all = torch.softmax(instance_logits[b], dim=-1)   # [T, C]
                     s_all = instance_logits[b]   # [T, C]
                     scores = s_all[:, pred_c]                           # [T]
                 else:
-                    # TimeMIL / newTimeMIL: class-token → time-token attention 기반
+                    # TimeMIL / newTimeMIL: based on class-token → time-token attention
                     scores = extract_attn_importance(
                         attn_layer2=attn_layer2,
                         T=T,
@@ -188,23 +188,23 @@ def compute_classwise_aopcr(
 
                 scores = scores.detach()
 
-                # scores 길이가 입력 T와 다를 수 있음 (모델 내부 처리로 인해)
+                # Scores length may differ from input T (due to model internal processing)
                 T_scores = scores.size(0)
                 if T_scores != T:
-                    # 길이가 다르면 interpolate하거나 truncate
+                    # Interpolate or truncate if length differs
                     if T_scores < T:
-                        # scores를 T 길이로 보간
+                        # Interpolate scores to length T
                         scores = torch.nn.functional.interpolate(
                             scores.view(1, 1, -1), size=T, mode='linear', align_corners=False
                         ).view(-1)
                     else:
-                        # scores를 T 길이로 자름
+                        # Truncate scores to length T
                         scores = scores[:T]
 
-                # 중요도 큰 순으로 정렬된 timestep index
+                # Timestep indices sorted by importance (descending)
                 sorted_idx = torch.argsort(scores, dim=0, descending=True)  # [T]
 
-                # 원본 logit (perturb 전)
+                # Original logit (before perturbation)
                 orig_logit = logits[b, pred_c].item()
 
                 # perturbation curves
@@ -216,26 +216,26 @@ def compute_classwise_aopcr(
 
                 # ----- perturbation loop -----
                 for step_i, alpha in enumerate(alphas[1:], start=1):
-                    # alpha 비율만큼 timestep을 0으로 마스킹
+                    # Zero-mask timesteps by alpha ratio
                     k = int(round(alpha.item() * T))
-                    k = min(max(k, 1), T)  # 항상 1~T 범위
+                    k = min(max(k, 1), T)  # always in range [1, T]
 
-                    # ---- 설명 기반 (expl) ----
-                    idx_remove_expl = sorted_idx[:k]           # [k], 0 <= idx < T 보장
+                    # ---- Explanation-based (expl) ----
+                    idx_remove_expl = sorted_idx[:k]           # [k], guaranteed 0 <= idx < T
                     x_pert_expl = x[b:b+1].clone()
-                    x_pert_expl[:, idx_remove_expl, :] = 0.0   # 길이는 그대로, 중요한 timestep만 0
+                    x_pert_expl[:, idx_remove_expl, :] = 0.0   # keep length, zero-mask important timesteps
 
                     out_expl = milnet(x_pert_expl)
                     if isinstance(out_expl, tuple):
                         if args.model == 'AmbiguousMIL':
                             logits_expl = out_expl[1]    # (prototype_logits, instance_pred, ...)
                         else:
-                            logits_expl = out_expl[0]              # (logits, ...) 형태
+                            logits_expl = out_expl[0]              # (logits, ...) format
                     else:
                         logits_expl = out_expl
                     curve_expl[step_i] = logits_expl[0, pred_c].item()
 
-                    # ---- 랜덤 기반 (rand) ----
+                    # ---- Random-based (rand) ----
                     for r in range(n_random):
                         rand_perm = torch.randperm(T, device=device)
                         idx_remove_rand = rand_perm[:k]
@@ -247,35 +247,35 @@ def compute_classwise_aopcr(
                             if args.model == 'AmbiguousMIL':
                                 logits_rand = out_rand[1]    # (prototype_logits, instance_pred, ...)
                             else:
-                                logits_rand = out_rand[0]              # (logits, ...) 형태
+                                logits_rand = out_rand[0]              # (logits, ...) format
                         else:
                             logits_rand = out_rand
                         curves_rand[r, step_i] = logits_rand[0, pred_c].item()
 
-                # ----- logit drop 기준 curve로 변환 -----
+                # ----- Convert to logit drop curves -----
                 drop_expl = orig_logit - curve_expl                       # [n_steps]
                 drop_rand = orig_logit - curves_rand.mean(dim=0)          # [n_steps]
 
-                # AOPC = mean over steps (step 간격을 균일하다고 보고 단순 평균)
+                # AOPC = mean over steps (simple average assuming uniform step intervals)
                 aopc_expl = drop_expl.mean().item()
                 aopc_rand = drop_rand.mean().item()
                 aopcr = aopc_expl - aopc_rand
                 if args.datatype == 'original':
                     total_aopcr_sum += aopcr
 
-                # class-wise 통계 누적
+                # Accumulate class-wise statistics
                 aopcr_per_class[pred_c] += aopcr
                 counts[pred_c] += 1
                 M_expl[pred_c] += drop_expl
                 M_rand[pred_c] += drop_rand
 
-    # ----- 클래스별 평균 및 전체 요약 -----
+    # ----- Per-class average and overall summary -----
     valid = counts > 0
-    aopcr_per_class[valid] /= counts[valid]                  # per-class 평균
+    aopcr_per_class[valid] /= counts[valid]                  # per-class average
     M_expl[valid] /= counts[valid].unsqueeze(1)
     M_rand[valid] /= counts[valid].unsqueeze(1)
 
-    # weighted 평균 (bag 수로 가중)
+    # Weighted average (weighted by bag count)
     total = counts.sum()
     if total > 0:
         weights = counts / total
@@ -283,7 +283,7 @@ def compute_classwise_aopcr(
     else:
         aopcr_weighted = 0.0
 
-    # 단순 평균 (valid class만)
+    # Simple average (valid classes only)
     if valid.any():
         aopcr_mean = aopcr_per_class[valid].mean().item()
     else:
@@ -297,7 +297,7 @@ def compute_classwise_aopcr(
         aopcr_per_class.cpu().numpy(),  # per-class AOPCR (C,)
         aopcr_weighted,                 # weighted average AOPCR (scalar)
         aopcr_mean,                     # simple mean over classes (scalar)
-        aopcr_overall_mean if args.datatype == 'original' else None,  # 전체 AOPCR 합 (original 데이터셋일 때만)
+        aopcr_overall_mean if args.datatype == 'original' else None,  # Overall AOPCR sum (only for original dataset)
         M_expl.cpu().numpy(),           # class-wise explanation curves (C, n_steps)
         M_rand.cpu().numpy(),           # class-wise random curves (C, n_steps)
         alphas.cpu().numpy(),           # perturbation ratios (n_steps,)

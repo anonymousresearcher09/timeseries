@@ -9,10 +9,10 @@ seed = 42
 random.seed(seed)             # python random
 np.random.seed(seed)          # numpy random
 torch.manual_seed(seed)       # CPU
-torch.cuda.manual_seed(seed)  # GPU 단일
+torch.cuda.manual_seed(seed)  # single GPU
 torch.cuda.manual_seed_all(seed)  # multi-GPU
 
-# 재현성을 위한 옵션들
+# Reproducibility options
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
@@ -49,12 +49,12 @@ class MixedSyntheticBags(Dataset):
         self.modes = keys
         self.mode_probs = vals
 
-        # 시드 고정
+        # Fix seed
         random.seed(seed); np.random.seed(seed)
         self.N, self.T, self.D = X.shape
         self.total_len = self.T if total_len is None else int(total_len)
 
-        # 클래스별 인덱스
+        # Per-class indices
         self.cls2inds = {c: [] for c in range(num_classes)}
         for i, c in enumerate(y_idx.tolist()):
             self.cls2inds[c].append(i)
@@ -62,9 +62,9 @@ class MixedSyntheticBags(Dataset):
             if len(self.cls2inds[c]) == 0:
                 raise ValueError(f"class {c} has no samples.")
 
-        # ---- 모든 bag의 스펙을 미리 샘플링(재현성 보장) ----
+        # ---- Pre-sample all bag specs for reproducibility ----
         self.sample_modes = np.random.choice(self.modes, size=self.total_bags, p=self.mode_probs)
-        self.bag_specs = []  # 각 bag: dict 저장
+        self.bag_specs = []  # store dict for each bag
         for mode in self.sample_modes:
             if mode == 'orig':
                 k = 1
@@ -85,7 +85,7 @@ class MixedSyntheticBags(Dataset):
                     s = random.randint(0, T_src - L)
                     tiled = False
                 else:
-                    s = -1               # 타일링 표시
+                    s = -1               # tiling indicator
                     tiled = True
                 seg_specs.append({"cls": c, "seg_len": L, "src_idx": src_idx, "start": s, "tiled": tiled})
             self.bag_specs.append({"mode": mode, "classes": classes, "parts": parts, "segs": seg_specs})
@@ -97,11 +97,11 @@ class MixedSyntheticBags(Dataset):
         spec = self.bag_specs[idx]
         segs = []
         y_bag = torch.zeros(self.num_classes, dtype=torch.float32)
-        # 타임스텝 단 클래스 id (후에 one-hot로 확장)
+        # Per-timestep class id (can be expanded to one-hot later)
         class_per_step = torch.empty(self.total_len, dtype=torch.long)
 
         offset = 0
-        meta_segments = []  # interpretability용 경계/원본 정보
+        meta_segments = []  # boundary/source info for interpretability
         for seg in spec["segs"]:
             c, L, src_idx, s, tiled = seg["cls"], seg["seg_len"], seg["src_idx"], seg["start"], seg["tiled"]
             x_src = self.X[src_idx]  # [T_src, D]
@@ -113,16 +113,16 @@ class MixedSyntheticBags(Dataset):
             segs.append(x_piece)
             y_bag[c] = 1.0
 
-            # 타임스텝 라벨 기록
+            # Record timestep labels
             class_per_step[offset:offset+L] = c
 
-            # 메타 기록 (bag 상의 위치, 원본에서의 위치/타일링 여부)
+            # Record metadata (position in bag, source position/tiling status)
             meta_segments.append({
                 "class": int(c),
                 "bag_start": int(offset),
                 "bag_end": int(offset + L),  # end-exclusive
                 "src_idx": int(src_idx),
-                "src_start": int(s),         # -1이면 tiled
+                "src_start": int(s),         # -1 if tiled
                 "tiled": bool(tiled)
             })
             offset += L
@@ -133,26 +133,26 @@ class MixedSyntheticBags(Dataset):
             # [T, C] one-hot
             y_inst = torch.zeros(self.total_len, self.num_classes, dtype=torch.float32)
             y_inst[torch.arange(self.total_len), class_per_step] = 1.0
-            # (bag, y_bag, y_inst, meta) 반환
+            # return (bag, y_bag, y_inst, meta)
             return bag, y_bag, y_inst
         else:
             return bag, y_bag
 
 class MixedSyntheticBagsConcatK(Dataset):
     """
-    X: [N, T, D]   - 원본 시퀀스들
-    y_idx: [N]     - 각 시퀀스의 클래스 인덱스 (0 ~ num_classes-1)
+    X: [N, T, D]   - original sequences
+    y_idx: [N]     - class index for each sequence (0 ~ num_classes-1)
 
-    synthetic bag 하나는:
-      - 원본 시퀀스 concat_k개를 선택해서 시간축으로 그대로 이어붙임
-      - 길이 = concat_k * T
-      - bag-level label은 안에 등장한 클래스들의 multi-hot
-      - instance-level label은 timestep마다 해당 시퀀스의 클래스 one-hot
+    Each synthetic bag:
+      - Selects concat_k original sequences and concatenates them along the time axis
+      - Length = concat_k * T
+      - Bag-level label is a multi-hot of the classes present
+      - Instance-level label is a per-timestep one-hot of the source sequence class
 
-    특징:
-      - 어떤 원본 시퀀스도 "자르지" 않습니다.
-      - 클래스는 랜덤으로 뽑히므로
-        -> 한 bag 안에 서로 다른 클래스 개수는 1 ~ concat_k 개 사이에서 자연스럽게 결정됩니다.
+    Properties:
+      - No original sequence is cropped or sliced.
+      - Classes are randomly sampled, so the number of distinct classes
+        per bag is naturally determined between 1 and concat_k.
     """
 
     def __init__(
@@ -167,7 +167,7 @@ class MixedSyntheticBagsConcatK(Dataset):
         with_replacement: bool = True,
     ):
         super().__init__()
-        assert X.dim() == 3, "X는 [N, T, D] 텐서여야 합니다."
+        assert X.dim() == 3, "X must be a [N, T, D] tensor."
         self.X = X
         self.y_idx = y_idx
         self.num_classes = int(num_classes)
@@ -177,13 +177,13 @@ class MixedSyntheticBagsConcatK(Dataset):
         self.with_replacement = with_replacement
 
         self.N, self.T, self.D = X.shape
-        self.total_len = self.concat_k * self.T  # bag 길이
+        self.total_len = self.concat_k * self.T  # bag length
 
-        # 시드 고정 (dataset 내부 재현성)
+        # Fix seed (internal reproducibility)
         random.seed(seed)
         np.random.seed(seed)
 
-        # ---- 미리 어떤 원본 시퀀스들을 이어붙일지 전체 bag에 대해 샘플링 ----
+        # ---- Pre-sample which source sequences to concatenate for all bags ----
         # bag_specs[b] = [src_idx_1, src_idx_2, ..., src_idx_K]
         self.bag_specs: List[List[int]] = []
 
@@ -191,10 +191,10 @@ class MixedSyntheticBagsConcatK(Dataset):
 
         for _ in range(self.total_bags):
             if self.with_replacement:
-                # 중복 허용 샘플링
+                # Sampling with replacement
                 chosen = [random.choice(indices) for _ in range(self.concat_k)]
             else:
-                # 중복 비허용 (N >= concat_k 가정)
+                # Sampling without replacement (assumes N >= concat_k)
                 chosen = random.sample(indices, self.concat_k)
 
             self.bag_specs.append(chosen)
@@ -203,24 +203,24 @@ class MixedSyntheticBagsConcatK(Dataset):
         return self.total_bags
 
     def __getitem__(self, idx):
-        src_indices = self.bag_specs[idx]  # 길이 concat_k
+        src_indices = self.bag_specs[idx]  # length concat_k
 
         bag_segments = []
         y_bag = torch.zeros(self.num_classes, dtype=torch.float32)
 
-        # timestep별 클래스 id (나중에 one-hot으로 바꿀 수 있음)
+        # Per-timestep class id (can be converted to one-hot later)
         class_per_step = torch.empty(self.total_len, dtype=torch.long)
 
         offset = 0
         for src_idx in src_indices:
             src_idx = int(src_idx)
             x_src = self.X[src_idx]            # [T, D]
-            c = int(self.y_idx[src_idx])      # 스칼라 클래스
+            c = int(self.y_idx[src_idx])      # scalar class
 
             bag_segments.append(x_src)
             y_bag[c] = 1.0  # bag-level multi-hot
 
-            # 이 시퀀스 구간의 timestep별 클래스
+            # Per-timestep class for this sequence segment
             class_per_step[offset:offset + self.T] = c
             offset += self.T
 

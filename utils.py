@@ -21,7 +21,7 @@ import logging
 
 
 def make_dirs(save_dir):
-    # 상위 디렉토리는 미리 만들어 둠
+    # Create parent directory if needed
     os.makedirs(save_dir, exist_ok=True)
 
     versions = []
@@ -45,7 +45,7 @@ def make_dirs(save_dir):
         version = 0
 
     exp_path = os.path.join(save_dir, f"exp_{version}")
-    # 이미 같은 이름이 있으면 오류 -> 논리 버그 잡는 용도
+    # Error if same name exists -> catches logic bugs
     os.makedirs(exp_path, exist_ok=False)
 
     return exp_path

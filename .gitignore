@@ -1,0 +1,39 @@
+# Data
+data/
+dba_data/
+
+# Model checkpoints & results
+savemodel/
+AOPCR_FINAL/
+
+# WandB
+wandb/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.eggs/
+.eggs/
+
+# Environment
+.env
+*.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/

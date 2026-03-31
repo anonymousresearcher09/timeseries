@@ -1,0 +1,9 @@
+torch==2.10.0
+torchvision==0.25.0
+numpy==2.2.6
+scikit-learn
+scipy
+pandas
+aeon==0.5.0
+wandb==0.24.1
+tqdm
